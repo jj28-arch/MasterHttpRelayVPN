@@ -163,6 +163,32 @@ class ProxyServer:
             log.error("Run: pip install cryptography")
             raise SystemExit(1)
 
+        # TCP Tunnel Server — for SSH and other non-HTTP protocols
+        tcp_cfg = config.get("tcp_tunnel", {})
+        self._tcp_tunnel_enabled = bool(tcp_cfg.get("enabled", False))
+        self._tcp_tunnel_server = None
+        
+        if self._tcp_tunnel_enabled:
+            try:
+                from .tcp_tunnel import TCPTunnelServer
+                tcp_listen_host = tcp_cfg.get("listen_host", "127.0.0.1")
+                tcp_listen_port = tcp_cfg.get("listen_port", 1080)
+                tcp_mode = tcp_cfg.get("mode", "apps_script")
+                
+                self._tcp_tunnel_server = TCPTunnelServer(
+                    listen_host=tcp_listen_host,
+                    listen_port=tcp_listen_port,
+                    domain_fronter=self.fronter,
+                    config=tcp_cfg,
+                )
+                log.info(
+                    "TCP tunnel configured: %s:%d [mode=%s]",
+                    tcp_listen_host, tcp_listen_port, tcp_mode
+                )
+            except ImportError as e:
+                log.warning("TCP tunnel disabled: %s", e)
+                self._tcp_tunnel_server = None
+
     # ── Host-policy helpers ───────────────────────────────────────
 
     @staticmethod
@@ -246,6 +272,7 @@ class ProxyServer:
 
         http_srv = await asyncio.start_server(self._on_client, self.host, self.port)
         socks_srv = None
+        tcp_tunnel_srv = None
 
         if self.socks_enabled:
             try:
@@ -255,6 +282,14 @@ class ProxyServer:
             except OSError as e:
                 log.error("SOCKS5 listener failed on %s:%d: %s",
                           self.socks_host, self.socks_port, e)
+
+        # Start TCP tunnel server if enabled
+        if self._tcp_tunnel_server:
+            try:
+                await self._tcp_tunnel_server.start()
+                tcp_tunnel_srv = True
+            except Exception as e:
+                log.error("TCP tunnel server failed to start: %s", e)
 
         self._servers = [s for s in (http_srv, socks_srv) if s]
 
@@ -272,10 +307,16 @@ class ProxyServer:
             async with http_srv:
                 if socks_srv:
                     async with socks_srv:
-                        await asyncio.gather(
-                            http_srv.serve_forever(),
-                            socks_srv.serve_forever(),
-                        )
+                        if tcp_tunnel_srv:
+                            await asyncio.gather(
+                                http_srv.serve_forever(),
+                                socks_srv.serve_forever(),
+                            )
+                        else:
+                            await asyncio.gather(
+                                http_srv.serve_forever(),
+                                socks_srv.serve_forever(),
+                            )
                 else:
                     await http_srv.serve_forever()
         except asyncio.CancelledError:
@@ -294,6 +335,13 @@ class ProxyServer:
             except Exception:
                 pass
         self._servers = []
+
+        # Stop TCP tunnel server if running
+        if self._tcp_tunnel_server:
+            try:
+                await self._tcp_tunnel_server.stop()
+            except Exception as exc:
+                log.debug("tcp_tunnel_server.stop: %s", exc)
 
         current = asyncio.current_task()
         client_tasks = [task for task in self._client_tasks if task is not current]

@@ -17,37 +17,10 @@
 	"max_response_body_bytes": 209715200,
 	"parallel_relay": 1,
 	"chunked_download_extensions": [
-		".bin",
-		".zip",
-		".tar",
-		".gz",
-		".bz2",
-		".xz",
-		".7z",
-		".rar",
-		".exe",
-		".msi",
-		".dmg",
-		".deb",
-		".rpm",
-		".apk",
-		".iso",
-		".img",
-		".mp4",
-		".mkv",
-		".avi",
-		".mov",
-		".webm",
-		".mp3",
-		".flac",
-		".wav",
-		".aac",
-		".pdf",
-		".doc",
-		".docx",
-		".ppt",
-		".pptx",
-		".wasm"
+		".bin", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+		".exe", ".msi", ".dmg", ".deb", ".rpm", ".apk", ".iso", ".img",
+		".mp4", ".mkv", ".avi", ".mov", ".webm", ".mp3", ".flac", ".wav", ".aac",
+		".pdf", ".doc", ".docx", ".ppt", ".pptx", ".wasm"
 	],
 	"chunked_download_min_size": 5242880,
 	"chunked_download_chunk_size": 524288,
@@ -95,5 +68,22 @@
 			"example.com",
 			"example.org"
 		]
+	},
+	"tcp_tunnel": {
+		"enabled": true,
+		"listen_host": "127.0.0.1",
+		"listen_port": 1080,
+		"mode": "apps_script",
+		"poll_interval": 0.05,
+		"protocol_ports": {
+			"SSH": 22,
+			"DNS": 53,
+			"SMTP": 25,
+			"TLS": 443
+		}
+	},
+	"cloudflare_worker": {
+		"websocket_url": "wss://your-worker.example.com/tcp",
+		"auth_token": "your-bearer-token-here"
 	}
 }

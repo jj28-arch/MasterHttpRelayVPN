@@ -2331,3 +2331,151 @@ class DomainFronter:
             results.append(parse_relay_json(item, self._max_response_body_bytes))
         return results
 
+    # ── TCP Tunnel Relay ───────────────────────────────────────────────────
+
+    async def relay_tcp_tunnel(self, tunnel_id: str, target_host: str,
+                               target_port: int, data: bytes) -> bytes:
+        """Relay TCP tunnel data through Apps Script.
+
+        TCP tunnels bypass the normal relay response format and communicate
+        directly with Apps Script's TCP tunnel handler. The handler may route
+        the request through an exit node (Cloudflare, VPS) depending on config.
+
+        Args:
+            tunnel_id: Unique tunnel identifier (for connection pooling)
+            target_host: Target server hostname (e.g., "127.0.0.1")
+            target_port: Target server port (e.g., 22 for SSH)
+            data: Raw TCP data to send to the target
+
+        Returns:
+            Raw TCP response data from the target server
+        """
+        # Build the TCP tunnel payload
+        payload = {
+            "k": self.auth_key,
+            "tunnel_id": tunnel_id,
+            "target_host": target_host,
+            "target_port": target_port,
+            "data": base64.b64encode(data).decode("ascii") if data else ""
+        }
+        
+        json_body = json.dumps(payload).encode()
+        sid = self._script_id_for_key(target_host)
+        path = self._exec_path_for_sid(sid)
+
+        try:
+            # Direct HTTP POST to Apps Script (bypass normal relay parsing)
+            # because TCP tunnel responses aren't in relay format
+            reader, writer, created = await self._acquire()
+            
+            try:
+                # Send HTTP POST request
+                request = (
+                    f"POST {path} HTTP/1.1\r\n"
+                    f"Host: {self.http_host}\r\n"
+                    f"Content-Type: application/json\r\n"
+                    f"Content-Length: {len(json_body)}\r\n"
+                    f"Connection: keep-alive\r\n"
+                    f"\r\n"
+                )
+                writer.write(request.encode() + json_body)
+                await writer.drain()
+                self._record_execution(sid)
+                
+                # Read HTTP response
+                status, resp_headers, resp_body = await read_http_response(
+                    reader, max_bytes=self._max_response_body_bytes
+                )
+                
+                log.debug(
+                    "TCP tunnel Apps Script response [%s]: status=%d, body_len=%d",
+                    tunnel_id, status, len(resp_body)
+                )
+                
+                # The response body contains the TCP tunnel JSON response
+                # (wrapped in HTML by Apps Script's _json() function)
+                if not resp_body:
+                    log.error(
+                        "Empty response body from Apps Script for tunnel [%s -> %s:%d]",
+                        tunnel_id, target_host, target_port
+                    )
+                    raise ValueError("Empty response from Apps Script")
+                
+                # Extract JSON from HTML response (Apps Script wraps in <pre> or plaintext)
+                resp_text = resp_body.decode(errors="replace").strip()
+                
+                log.debug(
+                    "TCP tunnel raw response [%s] (first 500 chars): %s",
+                    tunnel_id, resp_text[:500]
+                )
+                
+                # Try to parse as JSON directly
+                try:
+                    resp_obj = json.loads(resp_text)
+                except json.JSONDecodeError as e:
+                    log.debug(
+                        "Direct JSON parse failed for [%s]: %s | trying regex extraction",
+                        tunnel_id, e
+                    )
+                    # Try to extract JSON from HTML
+                    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', resp_text, re.DOTALL)
+                    if json_match:
+                        log.debug(
+                            "Extracted JSON from HTML for [%s]: %s",
+                            tunnel_id, json_match.group()[:200]
+                        )
+                        try:
+                            resp_obj = json.loads(json_match.group())
+                        except json.JSONDecodeError as inner_e:
+                            log.error(
+                                "Failed to parse extracted JSON for [%s]: %s | full response: %s",
+                                tunnel_id, inner_e, resp_text[:500]
+                            )
+                            raise ValueError(f"Invalid JSON in Apps Script response: {inner_e}")
+                    else:
+                        log.error(
+                            "Could not extract JSON from Apps Script response for [%s]: %s",
+                            tunnel_id, resp_text[:500]
+                        )
+                        raise ValueError(f"No JSON found in Apps Script response: {resp_text[:200]}")
+                
+                log.debug(
+                    "Parsed Apps Script TCP response for [%s]: status=%s, has_data=%s",
+                    tunnel_id, resp_obj.get("status"), "data" in resp_obj
+                )
+                
+                # Check for error in Apps Script response
+                if resp_obj.get("error"):
+                    raise RuntimeError(f"TCP tunnel error: {resp_obj['error']}")
+                
+                # Extract the base64-encoded TCP data from response
+                if "data" in resp_obj and resp_obj["data"]:
+                    try:
+                        decoded = base64.b64decode(resp_obj["data"])
+                        log.debug(
+                            "Decoded TCP tunnel data for [%s]: %d bytes",
+                            tunnel_id, len(decoded)
+                        )
+                        return decoded
+                    except Exception as e:
+                        log.error(
+                            "Failed to decode TCP tunnel data for [%s]: %s",
+                            tunnel_id, e
+                        )
+                        raise ValueError(f"Failed to decode tunnel response data: {e}")
+                
+                # No data in response (no response from target yet)
+                log.debug("No data in Apps Script response for tunnel [%s]", tunnel_id)
+                return b""
+                
+            finally:
+                await self._release(reader, writer, created)
+            
+        except Exception as exc:
+            log.warning(
+                "TCP tunnel relay failed [%s -> %s:%d]: %s: %s",
+                tunnel_id, target_host, target_port,
+                type(exc).__name__, exc
+            )
+            raise
+

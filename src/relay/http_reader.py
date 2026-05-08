@@ -80,7 +80,7 @@ async def read_http_response(
         remaining = total - len(body)
         while remaining > 0:
             chunk = await asyncio.wait_for(
-                reader.read(min(remaining, 65536)), timeout=20
+                reader.read(min(remaining, 65536)), timeout=30
             )
             if not chunk:
                 break
@@ -91,10 +91,11 @@ async def read_http_response(
                 )
             remaining -= len(chunk)
     else:
-        # No framing — short timeout read (keep-alive safe)
+        # No framing — read with extended timeout for streaming content
+        # (images, video thumbnails often have gaps between chunks)
         while True:
             try:
-                chunk = await asyncio.wait_for(reader.read(65536), timeout=2)
+                chunk = await asyncio.wait_for(reader.read(65536), timeout=10)
                 if not chunk:
                     break
                 body += chunk
@@ -127,7 +128,7 @@ async def _read_chunked(
     result = b""
     while True:
         while b"\r\n" not in buf:
-            data = await asyncio.wait_for(reader.read(8192), timeout=20)
+            data = await asyncio.wait_for(reader.read(8192), timeout=30)
             if not data:
                 return result
             buf += data
@@ -151,7 +152,7 @@ async def _read_chunked(
             )
 
         while len(buf) < size + 2:
-            data = await asyncio.wait_for(reader.read(65536), timeout=20)
+            data = await asyncio.wait_for(reader.read(65536), timeout=30)
             if not data:
                 result += buf[:size]
                 return result
