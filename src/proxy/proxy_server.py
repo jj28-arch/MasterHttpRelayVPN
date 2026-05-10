@@ -163,32 +163,6 @@ class ProxyServer:
             log.error("Run: pip install cryptography")
             raise SystemExit(1)
 
-        # TCP Tunnel Server — for SSH and other non-HTTP protocols
-        tcp_cfg = config.get("tcp_tunnel", {})
-        self._tcp_tunnel_enabled = bool(tcp_cfg.get("enabled", False))
-        self._tcp_tunnel_server = None
-        
-        if self._tcp_tunnel_enabled:
-            try:
-                from .tcp_tunnel import TCPTunnelServer
-                tcp_listen_host = tcp_cfg.get("listen_host", "127.0.0.1")
-                tcp_listen_port = tcp_cfg.get("listen_port", 1080)
-                tcp_mode = tcp_cfg.get("mode", "apps_script")
-                
-                self._tcp_tunnel_server = TCPTunnelServer(
-                    listen_host=tcp_listen_host,
-                    listen_port=tcp_listen_port,
-                    domain_fronter=self.fronter,
-                    config=tcp_cfg,
-                )
-                log.info(
-                    "TCP tunnel configured: %s:%d [mode=%s]",
-                    tcp_listen_host, tcp_listen_port, tcp_mode
-                )
-            except ImportError as e:
-                log.warning("TCP tunnel disabled: %s", e)
-                self._tcp_tunnel_server = None
-
     # ── Host-policy helpers ───────────────────────────────────────
 
     @staticmethod
@@ -283,14 +257,6 @@ class ProxyServer:
                 log.error("SOCKS5 listener failed on %s:%d: %s",
                           self.socks_host, self.socks_port, e)
 
-        # Start TCP tunnel server if enabled
-        if self._tcp_tunnel_server:
-            try:
-                await self._tcp_tunnel_server.start()
-                tcp_tunnel_srv = True
-            except Exception as e:
-                log.error("TCP tunnel server failed to start: %s", e)
-
         self._servers = [s for s in (http_srv, socks_srv) if s]
 
         log.info(
@@ -335,13 +301,6 @@ class ProxyServer:
             except Exception:
                 pass
         self._servers = []
-
-        # Stop TCP tunnel server if running
-        if self._tcp_tunnel_server:
-            try:
-                await self._tcp_tunnel_server.stop()
-            except Exception as exc:
-                log.debug("tcp_tunnel_server.stop: %s", exc)
 
         current = asyncio.current_task()
         client_tasks = [task for task in self._client_tasks if task is not current]
@@ -423,7 +382,15 @@ class ProxyServer:
                 return
             host, port = result
             log.info("SOCKS5 CONNECT → %s:%d", host, port)
-            await self._handle_target_tunnel(host, port, reader, writer)
+            
+            # For TCP traffic (SSH, etc), use HTTP relay through Apps Script
+            # This provides seamless TCP connectivity over HTTP/HTTPS
+            if self.fronter and not self._is_bypassed(host):
+                log.debug("SOCKS5: Using HTTP relay for %s:%d", host, port)
+                await self._relay_tcp_over_http(host, port, reader, writer)
+            else:
+                log.debug("SOCKS5: Using direct tunnel for %s:%d", host, port)
+                await self._handle_target_tunnel(host, port, reader, writer)
         except asyncio.IncompleteReadError:
             pass
         except asyncio.CancelledError:
@@ -439,6 +406,245 @@ class ProxyServer:
                 await writer.wait_closed()
             except Exception:
                 pass
+
+    # ── Tunable knobs for the TCP-over-HTTP relay ─────────────────────
+    # The browser must experience a *real* TCP connection: TLS handshake,
+    # HTTP/2 stream multiplexing, keep-alives — all of these involve many
+    # back-and-forth roundtrips that the proxy must shuttle without ever
+    # tearing down the upstream socket. State is held inside the Cloudflare
+    # Durable Object (one per tunnel_id); we only act as a pump.
+    #
+    # Quota math (Apps Script free tier ≈ 20k UrlFetchApp calls/day):
+    #   • Active connection (handshake/active fetch): one round-trip per
+    #     16 KB of client→server data + one long-poll for server→client.
+    #   • Idle connection (keep-alive): a single 30 s long-poll, so an
+    #     idle browser tab costs ≈ 2 calls/min ≈ 2,880 calls/day.
+    _TUNNEL_UPLOAD_CHUNK     = 32 * 1024     # max bytes per upload request
+    _TUNNEL_UPLOAD_BATCH_MS  = 0.020         # coalesce small writes ~20 ms
+    _TUNNEL_UPLOAD_WAIT_MS   = 200           # piggy-back drain on uploads
+    _TUNNEL_POLL_LONG_MS     = 30_000        # idle long-poll window
+    _TUNNEL_POLL_ACTIVE_MS   = 5_000         # short poll while bytes flowing
+    _TUNNEL_POLL_BACKOFF_MS  = (50, 250, 1_000)  # spacing after empty polls
+    _TUNNEL_OPEN_WAIT_MS     = 1_500         # let server speak first (SSH/SMTP)
+    _TUNNEL_CLIENT_READ_TO   = 60.0          # absent bytes ≠ dead, just idle
+
+    async def _relay_tcp_over_http(self, host: str, port: int,
+                                    reader: asyncio.StreamReader,
+                                    writer: asyncio.StreamWriter):
+        """Bi-directional TCP relay through the Apps Script → Cloudflare DO chain.
+
+        Two concurrent loops keep the illusion of a single end-to-end TCP
+        connection alive for the SOCKS5 client:
+
+          uploader()    client → relay
+            Reads from the client, batches small writes, and POSTs them as
+            ``send`` actions. Piggy-backs a short ``wait_ms`` so the response
+            from a freshly-written byte (e.g. server hello after client
+            hello) gets delivered in the same round-trip.
+
+          downloader()  relay → client
+            Long-polls the Durable Object for buffered server bytes and
+            writes them to the client. Falls back to short backoff sleeps
+            when the DO returns "no data" so we don't burn quota.
+
+        Both halves share a ``closed`` event; either side hitting EOF (or a
+        DO ``closed: true`` response) tears the whole tunnel down and
+        sends a ``close`` action so the DO can free its socket.
+        """
+        import uuid
+        tunnel_id = uuid.uuid4().hex
+        log.info("TCP-tunnel [%s] → %s:%d (open)", tunnel_id, host, port)
+
+        closed = asyncio.Event()
+        write_lock = asyncio.Lock()
+        bytes_up = 0
+        bytes_down = 0
+
+        async def write_to_client(data: bytes):
+            nonlocal bytes_down
+            if not data:
+                return
+            async with write_lock:
+                writer.write(data)
+                try:
+                    await writer.drain()
+                except (ConnectionError, asyncio.CancelledError):
+                    closed.set()
+                    raise
+            bytes_down += len(data)
+
+        # ── 1. open the upstream socket on the DO ──────────────────────
+        try:
+            resp = await self.fronter.tcp_tunnel_action(
+                tunnel_id, "open",
+                target_host=host, target_port=port,
+                wait_ms=self._TUNNEL_OPEN_WAIT_MS,
+            )
+        except Exception as e:
+            log.error("[%s] open failed: %s", tunnel_id, e)
+            return
+
+        if resp.get("error"):
+            log.error("[%s] DO refused open: %s", tunnel_id, resp["error"])
+            return
+
+        if resp.get("data"):
+            await write_to_client(resp["data"])
+
+        if resp.get("closed"):
+            log.info("[%s] DO closed immediately after open", tunnel_id)
+            closed.set()
+
+        # ── 2. uploader: client → relay ───────────────────────────────
+        async def uploader():
+            nonlocal bytes_up
+            try:
+                while not closed.is_set():
+                    try:
+                        chunk = await asyncio.wait_for(
+                            reader.read(self._TUNNEL_UPLOAD_CHUNK),
+                            timeout=self._TUNNEL_CLIENT_READ_TO,
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                    if not chunk:
+                        log.debug("[%s] client EOF", tunnel_id)
+                        break
+
+                    # Coalesce a tiny burst of follow-up writes into one
+                    # POST. Cuts request count for chatty protocols (e.g.
+                    # HTTP/2 SETTINGS + WINDOW_UPDATE arriving back-to-back).
+                    deadline = (
+                        asyncio.get_event_loop().time()
+                        + self._TUNNEL_UPLOAD_BATCH_MS
+                    )
+                    while len(chunk) < self._TUNNEL_UPLOAD_CHUNK:
+                        remaining = deadline - asyncio.get_event_loop().time()
+                        if remaining <= 0:
+                            break
+                        try:
+                            extra = await asyncio.wait_for(
+                                reader.read(self._TUNNEL_UPLOAD_CHUNK - len(chunk)),
+                                timeout=remaining,
+                            )
+                        except asyncio.TimeoutError:
+                            break
+                        if not extra:
+                            break
+                        chunk += extra
+
+                    bytes_up += len(chunk)
+                    try:
+                        resp = await self.fronter.tcp_tunnel_action(
+                            tunnel_id, "send",
+                            data=chunk,
+                            wait_ms=self._TUNNEL_UPLOAD_WAIT_MS,
+                            max_bytes=self._TUNNEL_UPLOAD_CHUNK,
+                        )
+                    except Exception as e:
+                        log.error("[%s] upload error: %s", tunnel_id, e)
+                        break
+
+                    if resp.get("error"):
+                        log.warning("[%s] DO send error: %s",
+                                    tunnel_id, resp["error"])
+                        break
+                    if resp.get("data"):
+                        await write_to_client(resp["data"])
+                    if resp.get("closed"):
+                        break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("[%s] uploader exit: %s", tunnel_id, e)
+            finally:
+                closed.set()
+
+        # ── 3. downloader: relay → client (long-poll + adaptive idle) ─
+        async def downloader():
+            backoff_idx = 0
+            try:
+                while not closed.is_set():
+                    # When the DO told us "more pending", drain at active
+                    # cadence; otherwise long-poll to minimize traffic.
+                    wait_ms = self._TUNNEL_POLL_LONG_MS
+                    try:
+                        resp = await self.fronter.tcp_tunnel_action(
+                            tunnel_id, "poll",
+                            wait_ms=wait_ms,
+                            max_bytes=self._TUNNEL_UPLOAD_CHUNK,
+                        )
+                    except Exception as e:
+                        log.error("[%s] poll error: %s", tunnel_id, e)
+                        break
+
+                    if resp.get("error"):
+                        log.warning("[%s] DO poll error: %s",
+                                    tunnel_id, resp["error"])
+                        break
+
+                    payload = resp.get("data") or b""
+                    if payload:
+                        await write_to_client(payload)
+                        backoff_idx = 0
+                    elif resp.get("closed"):
+                        break
+                    else:
+                        # Empty long-poll: rare but possible (CF cold start,
+                        # hibernation). Brief backoff before re-arming so
+                        # we don't hot-loop on a misbehaving DO.
+                        sleep_ms = self._TUNNEL_POLL_BACKOFF_MS[
+                            min(backoff_idx, len(self._TUNNEL_POLL_BACKOFF_MS) - 1)
+                        ]
+                        backoff_idx += 1
+                        try:
+                            await asyncio.wait_for(
+                                closed.wait(), timeout=sleep_ms / 1000.0,
+                            )
+                            break
+                        except asyncio.TimeoutError:
+                            pass
+
+                    if resp.get("more"):
+                        # bytes still buffered upstream — keep draining at
+                        # active cadence by looping straight back.
+                        backoff_idx = 0
+                    if resp.get("closed"):
+                        break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.debug("[%s] downloader exit: %s", tunnel_id, e)
+            finally:
+                closed.set()
+
+        # ── 4. run both halves until one closes the tunnel ────────────
+        up_task = asyncio.create_task(uploader())
+        down_task = asyncio.create_task(downloader())
+        try:
+            await closed.wait()
+        finally:
+            for t in (up_task, down_task):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(up_task, down_task, return_exceptions=True)
+
+            # Best-effort close on the DO so the upstream socket is freed
+            # promptly instead of waiting for the idle reaper.
+            try:
+                await asyncio.wait_for(
+                    self.fronter.tcp_tunnel_action(
+                        tunnel_id, "close", request_timeout=10.0,
+                    ),
+                    timeout=10.0,
+                )
+            except Exception:
+                pass
+
+            log.info(
+                "TCP-tunnel [%s] closed (up=%d, down=%d)",
+                tunnel_id, bytes_up, bytes_down,
+            )
 
     # ── CONNECT (HTTPS tunnelling) ────────────────────────────────
 

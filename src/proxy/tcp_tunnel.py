@@ -353,26 +353,28 @@ class TCPTunnelServer:
                           send_data: Optional[bytes]) -> Optional[bytes]:
         """
         Send chunk to Apps Script and receive response (polling mode).
-        Uses domain fronter's relay_tcp_tunnel() method.
+        Uses domain fronter's tcp_tunnel_action() method.
         """
         try:
             tunnel.seq_send += 1
             tunnel.last_activity = time.time()
             
-            # Use domain fronter to send HTTP POST to Apps Script
-            # relay_tcp_tunnel(tunnel_id, target_host, target_port, data)
-            response_data = await self.fronter.relay_tcp_tunnel(
+            # Use domain fronter to forward an action through Apps Script.
+            # First call doubles as "open" so the DO knows the target.
+            action = "send" if send_data else "poll"
+            resp = await self.fronter.tcp_tunnel_action(
                 tunnel.tunnel_id,
-                tunnel.target_host,
-                tunnel.target_port,
-                send_data or b''
+                action,
+                target_host=tunnel.target_host,
+                target_port=tunnel.target_port,
+                data=send_data or b"",
+                wait_ms=200,
             )
-            
-            if response_data:
+            payload = resp.get("data") or b""
+            if payload:
                 self.stats["bytes_sent"] += len(send_data or b'')
-                self.stats["bytes_received"] += len(response_data)
-                return response_data
-            
+                self.stats["bytes_received"] += len(payload)
+                return payload
             return None
         
         except Exception as e:

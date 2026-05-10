@@ -37,3 +37,6 @@ domainfront_certs_*/
 
 # Local scripts (excluded from git pushes)
 scripts/
+
+# Node modules is used because wrangler is used to deploy on cloudflare worker
+node_modules/

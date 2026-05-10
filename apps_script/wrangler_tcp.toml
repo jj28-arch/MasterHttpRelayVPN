@@ -1,0 +1,23 @@
+# Wrangler config for the TCP tunnel Worker (cloudflare_worker_tcp.js).
+#
+#   1. wrangler login
+#   2. wrangler deploy --config apps_script/wrangler_tcp.toml
+#   3. Copy the resulting *.workers.dev URL into Code.gs (CF_ENDPOINT)
+#      and into config.json under tcp_tunnel.cf_endpoint.
+#   4. Set AUTH_KEY to the SAME secret used in Code.gs / config.json.
+
+name = "tcp-tunnel"
+main = "cloudflare_worker_tcp.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "TCP_TUNNEL"
+class_name = "TcpTunnel"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TcpTunnel"]
+
+[vars]
+AUTH_KEY = "CHANGE_ME_TO_A_STRONG_SECRET"

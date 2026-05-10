@@ -2333,30 +2333,53 @@ class DomainFronter:
 
     # ── TCP Tunnel Relay ───────────────────────────────────────────────────
 
-    async def relay_tcp_tunnel(
+    async def tcp_tunnel_action(
         self,
         tunnel_id: str,
-        target_host: str,
-        target_port: int,
-        data: bytes
-    ) -> bytes:
+        action: str,
+        *,
+        target_host: str | None = None,
+        target_port: int | None = None,
+        data: bytes = b"",
+        wait_ms: int = 0,
+        max_bytes: int = 65536,
+        request_timeout: float | None = None,
+    ) -> dict:
+        """Send a TCP-tunnel action (open/send/poll/close) through Apps Script
+        to the Cloudflare Durable Object that owns the persistent socket.
 
-        payload = {
+        Returns the parsed JSON dict with keys:
+          data    — bytes drained from the recv buffer (already decoded)
+          more    — True if the buffer still has bytes after this drain
+          closed  — True if the upstream TCP socket has closed
+          error   — string or None
+        """
+        payload: dict = {
+            "k": self.auth_key,
             "tunnel_id": tunnel_id,
-            "target_host": target_host,
-            "target_port": target_port,
-            "data": base64.b64encode(data).decode("ascii") if data else ""
+            "action": action,
+            "wait_ms": int(wait_ms),
+            "max_bytes": int(max_bytes),
         }
+        if target_host is not None:
+            payload["target_host"] = target_host
+        if target_port is not None:
+            payload["target_port"] = int(target_port)
+        if data:
+            payload["data"] = base64.b64encode(data).decode("ascii")
 
-        full_payload = dict(payload)
-        full_payload["k"] = self.auth_key
-
-        json_body = json.dumps(full_payload).encode()
-
-        sid = self._script_id_for_key(target_host)
+        json_body = json.dumps(payload).encode()
+        sid = self._script_id_for_key(target_host or tunnel_id)
         path = self._exec_path_for_sid(sid)
 
+        # Cap blocking in our own HTTP read so a stalled DO can't wedge
+        # the connection forever. The DO clamps wait_ms to <50s; we add
+        # network slack on top.
+        if request_timeout is None:
+            request_timeout = max(15.0, (wait_ms / 1000.0) + 15.0)
+
         reader, writer, created = await self._acquire()
+        keep = False
 
         try:
             request = (
@@ -2364,81 +2387,93 @@ class DomainFronter:
                 f"Host: {self.http_host}\r\n"
                 f"Content-Type: application/json\r\n"
                 f"Content-Length: {len(json_body)}\r\n"
-                f"Accept-Encoding: gzip\r\n"
+                f"Accept-Encoding: identity\r\n"
                 f"Connection: keep-alive\r\n"
-                f"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n"
+                f"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                f"AppleWebKit/537.36\r\n"
                 f"\r\n"
             )
-
             writer.write(request.encode() + json_body)
             await writer.drain()
-
             self._record_execution(sid)
 
-            status, resp_headers, resp_body = await read_http_response(
-                reader,
-                max_bytes=self._max_response_body_bytes
+            status, resp_headers, resp_body = await asyncio.wait_for(
+                read_http_response(
+                    reader, max_bytes=self._max_response_body_bytes
+                ),
+                timeout=request_timeout,
             )
 
-            # Handle redirects
             for _ in range(5):
                 if status not in (301, 302, 303, 307, 308):
                     break
-
                 location = None
-
                 for k, v in resp_headers:
                     if k.lower() == b"location":
                         location = v.decode(errors="replace")
                         break
-
                 if not location:
                     raise RuntimeError("Redirect without Location header")
 
                 parsed = urllib.parse.urlparse(location)
-
                 new_host = parsed.netloc
                 new_path = parsed.path
-
                 if parsed.query:
                     new_path += "?" + parsed.query
 
+                # 301/302/303 → GET (no body); 307/308 → preserve POST.
+                if status in (307, 308):
+                    redirect_method = "POST"
+                    redirect_body = json_body
+                    extra = (
+                        f"Content-Type: application/json\r\n"
+                        f"Content-Length: {len(redirect_body)}\r\n"
+                    )
+                else:
+                    redirect_method = "GET"
+                    redirect_body = b""
+                    extra = ""
+
                 redirect_request = (
-                    f"POST {new_path} HTTP/1.1\r\n"
+                    f"{redirect_method} {new_path} HTTP/1.1\r\n"
                     f"Host: {new_host}\r\n"
-                    f"Content-Type: application/json\r\n"
-                    f"Content-Length: {len(json_body)}\r\n"
-                    f"Accept-Encoding: gzip\r\n"
+                    f"{extra}"
+                    f"Accept-Encoding: identity\r\n"
                     f"Connection: keep-alive\r\n"
-                    f"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n"
+                    f"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    f"AppleWebKit/537.36\r\n"
                     f"\r\n"
                 )
-
-                writer.write(redirect_request.encode() + json_body)
+                writer.write(redirect_request.encode() + redirect_body)
                 await writer.drain()
 
-                status, resp_headers, resp_body = await read_http_response(
-                    reader,
-                    max_bytes=self._max_response_body_bytes
+                status, resp_headers, resp_body = await asyncio.wait_for(
+                    read_http_response(
+                        reader, max_bytes=self._max_response_body_bytes
+                    ),
+                    timeout=request_timeout,
                 )
 
-
-            resp_text = resp_body.decode(errors="replace").strip()
-
-            resp_obj = load_relay_json(resp_text)
-
+            keep = True  # response was clean — connection is reusable
+            resp_obj = load_relay_json(
+                resp_body.decode(errors="replace").strip()
+            )
             if resp_obj is None:
-                print(resp_text)
-                raise ValueError("Could not parse Apps Script response")
+                raise ValueError("Could not parse Apps Script TCP response")
 
-
-            if resp_obj.get("error"):
-                raise RuntimeError(f"TCP Tunnel Error: {resp_obj['error']}")
-
-            if resp_obj.get("data"):
-                return base64.b64decode(resp_obj["data"])
-
-            return b""
-
+            data_b64 = resp_obj.get("data") or ""
+            return {
+                "data": base64.b64decode(data_b64) if data_b64 else b"",
+                "more": bool(resp_obj.get("more")),
+                "closed": bool(resp_obj.get("closed")),
+                "error": resp_obj.get("error"),
+                "buffered": int(resp_obj.get("buffered") or 0),
+            }
         finally:
-            await self._release(reader, writer, created)
+            if keep:
+                await self._release(reader, writer, created)
+            else:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
