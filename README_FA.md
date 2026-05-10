@@ -1,462 +1,349 @@
-# MasterHttpRelayVPN
+<div dir="rtl">
 
-**[English README](README.md)**
+# MasterHttpRelayVPN — فورک با پشتیبانی از TCP
 
-یک ابزار رایگان برای عبور از فیلترینگ و DPI که ترافیک شما را پشت دامنه‌های قابل اعتماد مثل Google پنهان می‌کند. برای حالت ساده، به VPS یا سرور نیاز ندارید و فقط یک اکانت Google کافی است.
+**[🇬🇧 English README](README.md)**
 
-> **توضیح ساده:** مرورگر شما به این ابزار روی کامپیوتر خودتان وصل می‌شود. این ابزار ترافیک را شبیه ترافیک عادی Google نشان می‌دهد. فیلتر فقط `google.com` را می‌بیند و اجازه عبور می‌دهد. در پشت صحنه، یک Google Apps Script رایگان سایت واقعی را برای شما دریافت می‌کند.
-
----
-
-## کانال اطلاع‌رسانی و پشتیبانی 📢
-
-برای دریافت آخرین اخبار، نسخه‌ها و اطلاعیه‌های پروژه، کانال تلگرام ما را دنبال کنید: [Telegram Channel](https://t.me/masterdnsvpn)
+> **این پروژه یک فورک از [masterking32/MasterHttpRelayVPN](https://github.com/masterking32/MasterHttpRelayVPN) است** که یک تغییر اساسی در هسته دارد: علاوه بر رله HTTP اصلی، یک **تونل واقعی TCP** اضافه می‌کند.
+>
+> پروژه اصلی فقط ترافیک HTTP/HTTPS را از طریق گوگل اپس‌اسکریپت رله می‌کند. این کار برای مرور وب کافی است، اما نمی‌تواند ترافیک TCP عمومی را حمل کند، چون **گوگل اپس‌اسکریپت اصلاً API برای سوکت TCP ندارد**: تنها ابزار شبکه‌اش `UrlFetchApp` است که فقط HTTP می‌فهمد. هر برنامه‌ای که به TCP خام نیاز دارد (SSH، ترافیک SOCKS5 از کلاینت‌هایی که نمی‌توان MITM کرد، پروتکل‌های اختصاصی، مرورگرهایی که گواهی محلی MITM را قبول نمی‌کنند و …) از دسترس آن خارج است.
+>
+> این فورک رله HTTP قبلی را دست‌نخورده نگه می‌دارد و یک مسیر داده‌ی دوم اضافه می‌کند که به کلاینت یک اتصال TCP واقعی end-to-end از همان کانال فرانت‌شده‌ی گوگل می‌دهد. سوکت پایدار روی یک **Durable Object در Cloudflare Worker** زندگی می‌کند و اپس‌اسکریپت فقط نقش پل را دارد. سمت پایتون هم با **long-polling** هر دو جهت را به‌طور هم‌زمان می‌راند تا مرورگر یک TCP طبیعی حس کند، بدون اینکه سهمیه‌ی اپس‌اسکریپت با polling حلقوی بی‌فایده سوزانده شود.
 
 ---
 
-### اگر از پروژه راضی‌اید، با دادن ستاره (⭐) در گیت‌هاب از ما حمایت کنید — این کار به دیده‌شدن پروژه کمک می‌کند.
+## چرا این فورک؟
 
----
-
-### حمایت مالی (اختیاری) 💸
-
-- شبکه TON:
-
-`masterking32.ton`
-
-- آدرس روی شبکه‌های EVM (ETH و سازگارها):
-
-`0x517f07305D6ED781A089322B6cD93d1461bF8652`
-
-- شبکه TRC20 (TRON):
-
-`TLApdY8APWkFHHoxebxGY8JhMeChiETqFH`
-
-از هر نوع حمایت و بازخورد شما سپاسگزاریم — کمک‌ها برای توسعه و بهبود پروژه بسیار ارزشمند است.
-
----
-
-## سلب مسئولیت
-
-پروژه MasterHttpRelayVPN فقط برای اهداف آموزشی، تست و پژوهش ارائه شده است.
-
-- **بدون ضمانت:** این نرم‌افزار به صورت «همان‌گونه که هست» ارائه می‌شود و هیچ‌گونه ضمانت صریح یا ضمنی، از جمله قابلیت فروش، مناسب بودن برای هدف خاص، یا عدم نقض حقوق دیگران برای آن وجود ندارد.
-- **محدودیت مسئولیت:** توسعه‌دهندگان و مشارکت‌کنندگان این پروژه هیچ مسئولیتی در قبال خسارت‌های مستقیم، غیرمستقیم، اتفاقی، تبعی، یا هر نوع خسارت دیگر ناشی از استفاده یا ناتوانی در استفاده از این پروژه ندارند.
-- **مسئولیت کاربر:** استفاده از این پروژه خارج از محیط‌های کنترل‌شده و آزمایشی ممکن است بر شبکه، حساب‌ها، پراکسی‌ها، گواهی‌ها یا سیستم‌های متصل اثر بگذارد. تمام مسئولیت نصب، پیکربندی و استفاده بر عهده کاربر است.
-- **رعایت قوانین:** پیش از استفاده از این نرم‌افزار، رعایت تمام قوانین و مقررات محلی، کشوری و بین‌المللی بر عهده کاربر است.
-- **رعایت قوانین Google:** اگر از Google Apps Script یا دیگر سرویس‌های Google در این پروژه استفاده می‌کنید، مسئولیت رعایت شرایط استفاده، محدودیت‌ها، سهمیه‌ها و سیاست‌های پلتفرم Google با خود شما است. استفاده نادرست ممکن است باعث تعلیق یا غیرفعال شدن اکانت Google یا deployment های شما شود.
-- **شرایط مجوز:** استفاده، کپی، توزیع و تغییر این نرم‌افزار فقط تحت شرایط مجوز موجود در مخزن مجاز است و هر استفاده خارج از آن شرایط ممنوع است.
-
----
-
-## نحوه کار
+جریان پروژه‌ی اصلی این است:
 
 ```
-مرورگر -> پراکسی محلی -> Google/CDN -> رله شما -> سایت مقصد
-           |
-           +-> فیلتر فقط google.com را می‌بیند
+مرورگر → پروکسی محلی → فرانت گوگل → اپس‌اسکریپت → fetch به آدرس مقصد → پاسخ
 ```
 
-مرورگر، درخواست‌ها را به پراکسی محلی می‌فرستد. پراکسی این درخواست‌ها را از مسیر Google عبور می‌دهد تا برای فیلتر شبیه ترافیک عادی به نظر برسد. سپس رله‌ای که شما deploy کرده‌اید، سایت اصلی را دریافت می‌کند و پاسخ را برمی‌گرداند.
+اپس‌اسکریپت درخواست را می‌گیرد، `UrlFetchApp.fetch(...)` را صدا می‌زند و بدنه را برمی‌گرداند. **هر درخواست یک fetch مستقل و یک‌شات HTTP است.** بعد از برگشت پاسخ، هیچ حالتی (state) سمت گوگل باقی نمی‌ماند. سوکتی، `connect()`ای، استریم نیمه‌بازی وجود ندارد — runtime اپس‌اسکریپت اصلاً ابزارهای TCP را در اختیار نمی‌گذارد.
 
----
+نتیجه این است که پروژه‌ی اصلی نمی‌تواند پاسخ‌گوی این موارد باشد:
+- مرورگری که آن را به عنوان پروکسی **SOCKS5** تنظیم کرده‌اید (مرورگر همیشه آن را HTTP-proxy نمی‌بیند و وضعیت TLS باید روی چندین رفت‌وبرگشت زنده بماند).
+- هر کلاینت SOCKS5 که می‌خواهد پروتکل غیر HTTP حرف بزند (SSH، MTProto، TLS خام به مقصد ناشناس، …).
+- موقعیت‌هایی که مرورگر گواهی MITM محلی را اعتماد نمی‌کند (لپ‌تاپ‌های شرکتی، مرورگرهای موبایل، Firefox با کانتینر بدون استثنا و …).
 
-## راه‌اندازی مرحله‌به‌مرحله
-
-### مرحله 1: دریافت پروژه
-
-```bash
-git clone -b python_testing https://github.com/masterking32/MasterHttpRelayVPN.git
-cd MasterHttpRelayVPN
-pip install -r requirements.txt
-```
-
-> **دسترسی به PyPI ندارید؟** از این mirror استفاده کنید:
-> ```bash
-> pip install -r requirements.txt -i https://mirror-pypi.runflare.com/simple/ --trusted-host mirror-pypi.runflare.com
-> ```
-
-اگر نخواستید با Git کار کنید، می‌توانید فایل ZIP پروژه را از GitHub دانلود و extract کنید.
-
-### مرحله 2: راه‌اندازی رله Google با `Code.gs`
-
-این بخش همان رله‌ای است که روی سرورهای Google اجرا می‌شود و سایت‌ها را برای شما دریافت می‌کند.
-
-1. وارد [Google Apps Script](https://script.google.com/) شوید.
-2. روی **New project** کلیک کنید.
-3. کد پیش‌فرض را کامل حذف کنید.
-4. فایل `apps_script/Code.gs` همین پروژه را باز کنید، همه محتوای آن را کپی کنید و داخل Apps Script قرار دهید.
-5. این خط را به یک رمز دلخواه و امن تغییر دهید:
-   ```javascript
-   const AUTH_KEY = "your-secret-password-here";
-   ```
-6. روی **Deploy -> New deployment** کلیک کنید.
-7. نوع deployment را **Web app** بگذارید.
-8. این تنظیمات را انتخاب کنید:
-   - **Execute as:** Me
-   - **Who has access:** Anyone
-9. روی **Deploy** بزنید.
-   - اگر پنجره‌ای باز شد، روی **Authorize access** کلیک کنید.
-   - اگر Google پیغام **Google hasn't verified this app** نشان داد، روی **Advanced** کلیک کنید و سپس **Go to <نام پروژه> (unsafe)** را بزنید تا ادامه دهید.
-10. مقدار **Deployment ID** را کپی کنید. در مرحله بعد به آن نیاز دارید.
-
-نکته: مقداری که برای `AUTH_KEY` می‌گذارید باید دقیقا با `auth_key` در فایل `config.json` یکی باشد.
-
-### مرحله 3: تنظیم `config.json`
-
-ابتدا فایل نمونه را کپی کنید:
-
-```bash
-cp config.example.json config.json
-```
-
-در ویندوز می‌توانید فایل را دستی کپی و rename کنید.
-
-سپس `config.json` را باز کنید و مقادیر را وارد کنید:
-
-```json
-{
-  "mode": "apps_script",
-  "google_ip": "216.239.38.120",
-  "front_domain": "www.google.com",
-  "script_id": "PASTE_YOUR_DEPLOYMENT_ID_HERE",
-  "auth_key": "your-secret-password-here",
-  "listen_host": "127.0.0.1",
-  "listen_port": 8085,
-  "socks5_enabled": true,
-  "socks5_port": 1080,
-  "log_level": "INFO",
-  "verify_ssl": true
-}
-```
-
-- `script_id` : همان Deployment ID مرحله 2
-- `auth_key` : همان رمزی که در `Code.gs` گذاشته‌اید
-
-### مرحله 3.5: نود خروجی اختیاری برای Full Tunnel
-
-برخی سایت‌ها (مثل ChatGPT) خروجی مستقیم از IPهای دیتاسنتر Google را مسدود می‌کنند.
-برای حل این مورد، نود خروجی (exit node) را فعال کنید تا مسیر این‌گونه شود:
-
-```text
-مرورگر -> پراکسی محلی -> Apps Script -> Exit Node (Cloudflare / Deno / VPS) -> سایت مقصد
-```
-
-می‌توانید یکی از این backend های نود خروجی را deploy کنید:
-
-1. Cloudflare Workers: [apps_script/cloudflare_worker.js](apps_script/cloudflare_worker.js)
-2. Deno Deploy: [apps_script/deno_deploy.ts](apps_script/deno_deploy.ts)
-3. سرور VPS شخصی
-
-راهنمای کامل مرحله‌به‌مرحله برای هر provider:
-- [docs/exit-node/EXIT_NODE_DEPLOYMENT_FA.md](docs/exit-node/EXIT_NODE_DEPLOYMENT_FA.md) (فارسی)
-- [docs/exit-node/EXIT_NODE_DEPLOYMENT.md](docs/exit-node/EXIT_NODE_DEPLOYMENT.md) (انگلیسی)
-
-سپس همان secret را هم در کد نود خروجی (`PSK`) و هم در `config.json` یکسان بگذارید.
-
-نمونه کانفیگ برای سوییچ بین provider ها:
-
-```json
-"exit_node": {
-  "enabled": true,
-  "provider": "cloudflare",
-  "url": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev",
-  "psk": "CHANGE_ME_TO_A_STRONG_SECRET",
-  "mode": "full",
-  "hosts": [
-    "chatgpt.com",
-    "openai.com",
-    "claude.ai",
-    "anthropic.com"
-  ]
-}
-```
-
-نکات:
-- برای تنظیم ساده، فقط `provider`، `url` و `psk` را پر کنید.
-- برای تغییر backend مقدار `exit_node.provider` و `exit_node.url` را عوض کنید.
-- `mode: "full"` یعنی همه ترافیک از exit node عبور می‌کند (`hosts` نادیده گرفته می‌شود).
-- `mode: "selective"` یعنی فقط دامنه‌های داخل `hosts` از exit node عبور می‌کنند.
-- مقدار `psk` باید دقیقا با secret تنظیم‌شده در runtime برابر باشد.
-
-### مرحله 4: اجرا
-
-```bash
-python3 main.py
-```
-
-اگر همه‌چیز درست باشد، پراکسی HTTP روی `127.0.0.1:8085` و SOCKS5 روی `127.0.0.1:1080` بالا می‌آید.
-
-### مرحله 5: تنظیم مرورگر
-
-مرورگر را روی این پراکسی تنظیم کنید:
-
-- **Proxy Address:** `127.0.0.1`
-- **Proxy Port:** `8085`
-- **Type:** HTTP
-- **SOCKS5 Port (اختیاری):** `1080`
-
-نمونه تنظیم مرورگرها:
-
-- **Firefox:** Settings -> General -> Network Settings -> Manual proxy
-- **Chrome / Edge:** از تنظیمات پراکسی سیستم استفاده می‌کنند
-- یا از افزونه‌هایی مثل FoxyProxy استفاده کنید
-
-### مرحله 6: نصب گواهی CA برای HTTPS
-
-در حالت `apps_script`، برنامه برای مدیریت HTTPS یک گواهی محلی می‌سازد. اگر آن را نصب نکنید، مرورگر برای سایت‌ها خطای امنیتی می‌دهد.
-
-فایل گواهی بعد از اولین اجرا در این مسیر ساخته می‌شود:
-
-`ca/ca.crt`
-
-#### ویندوز
-1. روی `ca/ca.crt` دوبار کلیک کنید.
-2. گزینه **Install Certificate** را بزنید.
-3. گزینه **Current User** را انتخاب کنید.
-4. گزینه **Place all certificates in the following store** را بزنید.
-5. از بخش **Browse**، گزینه **Trusted Root Certification Authorities** را انتخاب کنید.
-6. مراحل را تا پایان ادامه دهید.
-7. مرورگر را یک بار ببندید و دوباره باز کنید.
-
-#### Firefox
-Firefox معمولا certificate store جداگانه دارد:
-
-1. به **Settings -> Privacy & Security -> Certificates** بروید.
-2. روی **View Certificates** کلیک کنید.
-3. در تب **Authorities**، روی **Import** بزنید.
-4. فایل `ca/ca.crt` را انتخاب کنید.
-5. گزینه **Trust this CA to identify websites** را فعال کنید.
-
-> **نصب خودکار هنگام اجرا:** در حالت `apps_script`، برنامه به صورت خودکار وضعیت اعتماد گواهی CA را بررسی کرده و در صورت نیاز نصب می‌کند. در صورت موفقیت پیام تأیید در لاگ نمایش داده می‌شود. اگر نصب خودکار ناموفق بود، می‌توانید دستور `python main.py --install-cert` را اجرا کنید.
-
-نکته امنیتی: پوشه `ca/` را با کسی به اشتراک نگذارید. اگر خواستید از اول گواهی جدید بسازید، این پوشه را حذف کنید تا دوباره ساخته شود.
-
-
----
-
-## حالت‌های موجود
-
-این پروژه کاملاً روی حالت **Apps Script** تمرکز دارد. فقط به یک اکانت رایگان Google نیاز دارید — بدون VPS، بدون سرور، بدون Cloudflare. همه‌چیز برای همین حالت تنظیم شده است.
-
----
-
-## اشتراک‌گذاری در شبکه محلی (اختیاری)
-
-به‌طور پیش‌فرض، پروکسی فقط به `127.0.0.1` (localhost) گوش می‌دهد، به این معنی که فقط کامپیوتر شما می‌تواند از آن استفاده کند. برای اینکه سایر دستگاه‌های موجود در شبکه محلی (LAN) شما بتوانند از این پروکسی استفاده کنند:
-
-۱. در فایل `config.json` خود، مقدار `"lan_sharing"` را `true` قرار دهید.
-۲. پروکسی به طور خودکار به تمام رابط‌های شبکه (`0.0.0.0`) گوش خواهد داد.
-۳. در لاگ راه‌اندازی، آدرس‌های IP شبکه محلی شما که سایر دستگاه‌ها می‌توانند به آن متصل شوند، نمایش داده می‌شود.
-
-**نمونه پیکربندی برای شبکه محلی:**
-json
-{
-  "lan_sharing": true,
-  "listen_host": "0.0.0.0",
-  "listen_port": 8085
-}
-
-**هشدار امنیتی:** وقتی اشتراک‌گذاری در شبکه محلی فعال باشد، هر کسی در شبکه محلی شما می‌تواند از پروکسی شما استفاده کند. اطمینان حاصل کنید که شبکه شما مورد اعتماد است و اقدامات امنیتی بیشتری را در نظر بگیرید.
-
-**در سایر دستگاه‌ها:** آن‌ها را طوری پیکربندی کنید که از آدرس IP کامپیوتر شما در شبکه محلی (که در لاگ راه‌اندازی نمایش داده می‌شود) و پورت 8085 به عنوان پروکسی HTTP استفاده کنند.
-
----
-
-## تنظیمات اصلی
-
-| تنظیم | توضیح |
-|------|-------|
-| `auth_key` | رمز مشترک بین کامپیوتر شما و رله |
-| `script_id` | شناسه Deployment مربوط به Google Apps Script شما |
-| `listen_host` | محل گوش دادن (`127.0.0.1` = فقط همین کامپیوتر، `0.0.0.0` = همه اینترفیس‌ها برای اشتراک‌گذاری LAN) |
-| `listen_port` | پورتی که پروکسی روی آن اجرا می‌شود (پیش‌فرض: `8085`) |
-| `lan_sharing` | فعال‌سازی اشتراک‌گذاری LAN تا دستگاه‌های دیگر در شبکه شما بتوانند از پروکسی استفاده کنند (به‌صورت پیش‌فرض `false`) |
-| `log_level` | میزان جزئیات لاگ: `DEBUG`، `INFO`، `WARNING`، `ERROR` |
-
-### تنظیمات پیشرفته
-
-| تنظیم | مقدار پیش‌فرض | توضیح |
-|------|---------------|-------|
-| `google_ip` | `216.239.38.120` | IP مورد استفاده برای مسیر Google |
-| `front_domain` | `www.google.com` | دامنه‌ای که فیلتر می‌بیند |
-| `verify_ssl` | `true` | بررسی اعتبار TLS فقط برای اتصال fronted محلی به Google/CDN |
-| `relay_timeout` | `25` | مهلت کل برای هر درخواست relay قبل از fail شدن |
-| `tls_connect_timeout` | `15` | مهلت اتصال TLS پروکسی به endpoint fronted روی Google/CDN |
-| `tcp_connect_timeout` | `10` | مهلت اتصال برای tunnel مستقیم و SNI-rewrite |
-| `max_response_body_bytes` | `209715200` | سقف نهایی برای اندازه body هر پاسخ relay بعد از buffer/decode |
-| `script_ids` | - | چند Deployment ID برای load balancing |
-| `chunked_download_extensions` | مطابق [config.example.json](config.example.json) | پسوند فایل‌هایی که باید از دانلود range-parallel استفاده کنند. از `".*"` هم برای probe همه دانلودهای GET پشتیبانی می‌شود. |
-| `chunked_download_min_size` | `5242880` | حداقل اندازه کل فایل (۵ مگابایت) برای فعال ماندن دانلود موازی |
-| `chunked_download_chunk_size` | `524288` | اندازه هر chunk در دانلود موازی |
-| `chunked_download_max_parallel` | `8` | حداکثر تعداد range request همزمان برای یک دانلود |
-| `chunked_download_max_chunks` | `256` | سقف نرم برای تعداد کل chunk request ها؛ برای فایل‌های خیلی بزرگ اندازه chunk به‌صورت خودکار بیشتر می‌شود |
-| `block_hosts` | `[]` | هاست‌هایی که هرگز نباید tunnel شوند (پاسخ 403). نام دقیق (`ads.example.com`) یا پسوند با نقطه‌ی ابتدایی (`.doubleclick.net`). |
-| `bypass_hosts` | `["localhost", ".local", ".lan", ".home.arpa"]` | هاست‌هایی که مستقیم می‌روند (بدون MITM و بدون رله). برای منابع داخلی شبکه یا سایت‌هایی که با MITM مشکل دارند. |
-| `direct_google_exclude` | مراجعه به [config.example.json](config.example.json) | اپ‌های Google که باید از مسیر MITM برای رله استفاده کنند به‌جای tunnel مستقیم. |
-| `youtube_via_relay` | `false` | مسیردهی YouTube (`youtube.com`، `youtu.be`، `youtube-nocookie.com`) از طریق رله Apps Script به‌جای مسیر SNI-rewrite. مسیر SNI-rewrite از IP فرانت‌اند Google عبور می‌کند که SafeSearch را اجباری می‌کند و می‌تواند باعث خطای **«ویدیو در دسترس نیست»** شود. با فعال کردن این گزینه، پخش ویدیو درست می‌شود اما تعداد اجراهای Apps Script بیشتر و تأخیر اندکی بالاتر می‌رود. |
-| `exit_node.provider` | `cloudflare` | backend انتخاب‌شده برای exit node: `cloudflare`، `deno`، `vps` یا `custom`. |
-| `exit_node.url` | `""` | آدرس ساده و اصلی برای provider انتخاب‌شده. |
-
-### وابستگی‌های اختیاری
-
-همه وابستگی‌های [`requirements.txt`](requirements.txt) اختیاری هستند — در حالت پایه بدون هیچ‌کدام کار می‌کند، ولی با نصب آن‌ها امکانات بیشتری در دسترس است:
-
-| بسته | کاربرد |
-|------|---------|
-| `cryptography` | رمزگشایی MITM برای HTTPS (در حالت `apps_script` لازم است) |
-| `h2` | ارتباط HTTP/2 با رله Apps Script (به‌طور محسوسی سریع‌تر) |
-| `brotli` | پشتیبانی از فشرده‌سازی `Content-Encoding: br` |
-| `zstandard` | پشتیبانی از فشرده‌سازی `Content-Encoding: zstd` |
-
-### استفاده از چند Script ID
-
-اگر چند نسخه از `Code.gs` را deploy کنید، می‌توانید همه Deployment ID ها را در آرایه `script_ids` بگذارید:
-
-```json
-{
-  "script_ids": [
-    "DEPLOYMENT_ID_1",
-    "DEPLOYMENT_ID_2",
-    "DEPLOYMENT_ID_3"
-  ]
-}
-```
-> **نکته :** اگر از چندین دیپلویمنت آیدی استفاده میکنید توجه داشته باشید که auth_key های همه دیپلویمنت ها باید یکسان باشند.
----
-
-## به‌روزرسانی `Code.gs`
-
-اگر فایل `Code.gs` را تغییر دادید، باید دوباره **Deploy -> New deployment** بزنید و `script_id` جدید را داخل `config.json` قرار دهید. صرفا ذخیره کردن کد، نسخه فعال را عوض نمی‌کند.
-
----
-
-## دستورهای اجرا
-
-```bash
-python3 main.py
-python3 main.py -p 9090
-python3 main.py --socks5-port 1081
-python3 main.py --disable-socks5
-python3 main.py --log-level DEBUG
-python3 main.py -c /path/to/config.json
-python3 main.py --install-cert        # نصب گواهی CA و خروج
-python3 main.py --uninstall-cert      # حذف گواهی CA و خروج
-python3 main.py --no-cert-check       # رد شدن از بررسی خودکار گواهی
-python3 main.py --scan                # اسکن IP های Google و یافتن سریع‌ترین
-```
-
-> **نصب خودکار:** هنگام اجرا در حالت `apps_script`، برنامه به‌طور خودکار بررسی می‌کند که آیا گواهی CA قابل اعتماد است یا نه و در صورت نیاز آن را نصب می‌کند. اگر نصب خودکار ناموفق بود (مثلاً نیاز به دسترسی مدیر دارد)، می‌توانید دستور `python main.py --install-cert` را اجرا کنید یا مراحل مرحله ۶ را دنبال کنید.
-
-### اسکن کردن برای یافتن سریع‌ترین IP گوگل
-
-اگر `google_ip` فعلی در `config.json` بلاک شده یا آهسته است، می‌توانید اسکن کنید تا سریع‌ترین آن را پیدا کنید:
-
-```bash
-python3 main.py --scan
-```
-
-این دستور:
-1. ۲۷ IP برای fronting Google را به‌صورت موازی بررسی می‌کند
-2. تأخیر (latency) از شبکه شما را اندازه می‌گیرد
-3. نتایج را در جدول نمایش می‌دهد
-4. سریع‌ترین IP را پیشنهاد می‌دهد
-5. اگر حداقل یک IP در دسترس باشد کد خروج ۰، ورنه ۱ را برمی‌گرداند
-
-**نمونه خروجی:**
-```
-Scanning 27 Google frontend IPs
-  SNI: www.google.com
-  Timeout: 4s per IP
-  Concurrency: 8 parallel probes
-
-IP                   LATENCY      STATUS
--------------------- ------------ -------------------------
-216.239.32.120          42ms   OK
-216.239.34.120          45ms   OK
-216.239.36.120          52ms   OK
-142.250.80.142       timeout   timeout
-...
-
-Result: 15 / 27 reachable
-
-Top 3 fastest IPs:
-  1. 216.239.32.120 (42ms)
-  2. 216.239.34.120 (45ms)
-  3. 216.239.36.120 (52ms)
-
-Recommended: Set "google_ip": "216.239.32.120" in config.json
-```
-
-پس از اسکن، مقدار `google_ip` در `config.json` را با IP پیشنهادی به‌روزرسانی کنید و پراکسی را دوباره راه‌اندازی کنید.
+این فورک با اضافه کردن یک سوکت TCP واقعی **بالادست اپس‌اسکریپت** روی Cloudflare و تبدیل اپس‌اسکریپت به یک forwarder، این محدودیت را برطرف می‌کند.
 
 ---
 
 ## معماری
 
 ```
-┌─────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────┐
-│ Browser │────►│ Local Proxy  │────►│ CDN / Google │────►│  Relay   │──► Internet
-│         │◄────│ (this tool)  │◄────│  (fronted)   │◄────│ Endpoint │◄──
-└─────────┘     └──────────────┘     └─────────────┘     └──────────┘
+                                                           ┌──────────────────────────────┐
+                                                           │  Cloudflare Worker           │
+ مرورگر (SOCKS5)                                           │  ┌────────────────────────┐  │
+       │                                                   │  │  Durable Object        │  │
+       ▼                                                   │  │  TcpTunnel(tunnel_id)  │  │
+ ┌──────────────┐    HTTPS (SNI=www.google.com,            │  │   • سوکت TCP واقعی     │  │
+ │  پروکسی محلی │──── Host=script.google.com) ────►  Apps  │  │   • بافر دریافت        │──┼──► host:port مقصد
+ │   (پایتون)   │◄──── JSON اَکشن‌محور ────  Script  ──────┼─►│   • انتظار long-poll   │  │
+ └──────────────┘                                          │  └────────────────────────┘  │
+       ▲                                                   └──────────────────────────────┘
+       │
+   uploader (کلاینت → رله)        downloader (رله → کلاینت با long-poll)
+```
+
+### پروتکل اَکشن‌محور (پایتون ↔ اپس‌اسکریپت ↔ DO)
+
+پروکسی پایتون JSON را به اپس‌اسکریپت POST می‌کند؛ اپس‌اسکریپت همان را عیناً به Cloudflare Worker می‌فرستد و worker آن را به نمونه‌ی Durable Object که با `tunnel_id` ایندکس می‌شود می‌سپارد. DO تنها جایی است که سوکت TCP زنده در آن نگه‌داری می‌شود.
+
+| اَکشن  | کار آن                                                                  |
+|--------|--------------------------------------------------------------------------|
+| `open` | DO یک سوکت TCP به `target_host:target_port` باز می‌کند. اگر `data` بفرستید، روی سوکت نوشته می‌شود و پاسخ فوری (مثلاً بنر SSH) در همان رفت‌وبرگشت برمی‌گردد. |
+| `send` | DO روی سوکت می‌نویسد و با `wait_ms` کوتاه (~۲۰۰ms) منتظر می‌ماند تا پاسخی که بلافاصله می‌رسد (مثلاً `ServerHello` در TLS) را در همان پاسخ HTTP برگرداند. |
+| `poll` | Long-poll: اگر در بافر داده هست، فوراً برمی‌گردد؛ وگرنه تا حدود ۳۰ ثانیه می‌خوابد و منتظر سرور بالادست می‌ماند. این **کانال idle** است که بدون ترافیک، اتصال را زنده نگه می‌دارد. |
+| `close`| سوکت و نمونه‌ی DO آزاد می‌شوند. وقتی کلاینت قطع کند ارسال می‌شود. |
+
+### چرا long-polling؟
+
+طراحی ساده‌لوحانه این است که سمت پایتون هر ۵۰ms یک‌بار از اپس‌اسکریپت بپرسد «بایت جدیدی هست؟». این یعنی **۲۰ درخواست در ثانیه برای هر تونل**، که سهمیه‌ی روزانه‌ی `UrlFetchApp` (حدود ۲۰٬۰۰۰ تماس در روز در پلن رایگان) را در کمتر از ۲۰ دقیقه برای هر تونل می‌سوزاند.
+
+به‌جای آن، downloader یک long-poll واحد ۳۰ ثانیه‌ای می‌فرستد. DO تا وقتی یا (الف) سرور حرف بزند یا (ب) پنجره‌ی انتظار تمام شود داخل همان درخواست HTTP می‌خوابد. در نتیجه:
+
+- یک تب مرورگرِ idle تقریباً ~۲ تماس در دقیقه ≈ ۲٬۸۸۰ در روز خرج می‌کند.
+- هندشیک TLS و درخواست‌های HTTP فعال **بلافاصله** برمی‌گردند به محض رسیدن داده — هیچ بازه‌ی polling ثابتی منتظر نیست.
+
+### uploader و downloader هم‌زمان
+
+سمت پایتون دو حلقه‌ی مستقل اجرا می‌شود:
+
+- **Uploader:** از کلاینت SOCKS5 می‌خواند، نوشته‌های ریز پشت‌سرهم را در یک پنجره‌ی ~۲۰ms داخل یک POST جمع می‌کند و `action=send` می‌فرستد. هر آپلود به‌طور فرصت‌طلبانه با `wait_ms=200` پاسخ سمت پایین را هم drain می‌کند.
+- **Downloader:** پیوسته با `action=poll` و `wait_ms=30000` long-poll می‌کند و هر بایتی که برمی‌گردد را به کلاینت می‌نویسد.
+
+یک رویداد مشترک `closed` این دو را به هم می‌بندد: هر کدام EOF بشود یا DO جواب `closed:true` بدهد، کل تونل بسته می‌شود و یک `action=close` ارسال می‌شود تا سوکت بالادست سریع آزاد شود.
+
+---
+
+## چالش‌ها و محدودیت‌های فعلی
+
+- **محدودیت نرخ گوگل اپس‌اسکریپت.** قید اصلی همین است. حساب‌های Google رایگان روزانه حدود **۲۰٬۰۰۰ تماس `UrlFetchApp`** و حدود **۶ ساعت زمان اجرای کل اسکریپت** دارند. long-polling تنها چیزی است که این تونل را روی پلن رایگان عملی می‌کند. استفاده‌ی سنگین (چند مرورگر، استریم ویدیو از روی SOCKS5) **حتماً** سقف روزانه را می‌زند و تا ریست بعدی (نیمه‌شب اقیانوس آرام) خطا برمی‌گردد. اکانت‌های Workspace سقف بالاتری دارند. توزیع `script_id` روی چند اکانت گوگل (قابلیت multi-script پروژه‌ی اصلی) هم کمک می‌کند.
+- **پلن رایگان Cloudflare Worker.** ۱۰۰٬۰۰۰ درخواست در روز در هر اکانت. هر تماس اپس‌اسکریپت به Worker = یک درخواست. زمان CPU برای Durable Object هم محاسبه می‌شود؛ پس تونل‌های idle طولانی GB-second جمع می‌کنند. برای استفاده‌ی شخصی همچنان راحت داخل پلن رایگان جا می‌شود.
+- **تأخیر.** هر رفت‌وبرگشت از مسیر *مرورگر → پایتون → اپس‌اسکریپت → کلودفلر → مقصد → برگشت* عبور می‌کند. RTT اضافه نسبت به VPN واقعی محسوس است. برای مرور وب و SSH خوب است؛ برای بازی‌های low-latency نه.
+- **timeout اجرای اپس‌اسکریپت.** هر تماس `UrlFetchApp` باید زیر ~۶۰ ثانیه تمام شود. ما `wait_ms` را روی Worker تا ۴۵ ثانیه clamp می‌کنیم تا تماس همیشه تمیز و با حاشیه برگردد.
+- **همروندی هر تونل.** هر تونل از یک نمونه‌ی Durable Object استفاده می‌کند. همروندی DOهای Cloudflare کم نیست ولی روی پلن رایگان بی‌نهایت هم نیست؛ ده‌ها تونل هم‌زمان (تب‌های متعدد مرورگر هرکدام اتصال تازه) ممکن است نزدیک سقف بشود.
+
+---
+
+## راهنمای کامل نصب و استقرار
+
+سرجمع باید سه قطعه را مستقر کنید و آن‌ها را با یک رمز مشترک به هم وصل کنید:
+
+1. **یک Web App گوگل اپس‌اسکریپت** (رله HTTP و forwarder TCP).
+2. **یک Cloudflare Worker با Durable Object** (سوکت TCP پایدار).
+3. **پروکسی پایتون** که محلی اجرا می‌شود.
+
+پیش‌نیازها:
+
+- یک حساب گوگل.
+- یک حساب Cloudflare (پلن رایگان کافی است).
+- **Node.js** (برای ابزار `wrangler`).
+- **Python 3.10 یا بالاتر**.
+
+### مرحله ۱ — نصب Node.js (لازم برای `wrangler`)
+
+`wrangler` ابزار رسمی Cloudflare برای deploy کردن Worker است که روی Node اجرا می‌شود.
+
+#### لینوکس (Debian/Ubuntu/Pop!_OS)
+
+```bash
+# اسکریپت آماده‌ی NodeSource برای Node 20.x به‌روز:
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version   # باید v20.x.x نشان دهد
+npm --version
+```
+
+یا از مخزن خود توزیع (ممکن است نسخه قدیمی‌تر باشد):
+
+```bash
+sudo apt-get update && sudo apt-get install -y nodejs npm
+```
+
+#### لینوکس (Fedora / RHEL)
+
+```bash
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo dnf install -y nodejs
+```
+
+#### لینوکس (Arch)
+
+```bash
+sudo pacman -S nodejs npm
+```
+
+#### مک
+
+```bash
+brew install node
+```
+
+(یا از [nodejs.org/en/download](https://nodejs.org/en/download) دانلود کنید)
+
+#### ویندوز
+
+نصب‌کننده‌ی LTS را از [nodejs.org](https://nodejs.org/en/download) دانلود و اجرا کنید. سپس در یک پنجره‌ی PowerShell جدید:
+
+```powershell
+node --version
+npm --version
+```
+
+#### روش پیشنهادی برای مدیریت چند نسخه‌ی Node: nvm
+
+```bash
+# لینوکس / مک
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+# شل را ببندید و باز کنید:
+nvm install --lts
+nvm use --lts
+```
+
+### مرحله ۲ — نصب Wrangler
+
+```bash
+npm install -g wrangler
+wrangler --version
+wrangler login           # مرورگر را برای ورود به Cloudflare باز می‌کند
+```
+
+### مرحله ۳ — انتخاب یک رمز مشترک قوی
+
+مقدار `AUTH_KEY` باید در **سه** جا یکی باشد: اپس‌اسکریپت، Cloudflare Worker و `config.json`. یکی بسازید و کنار دست نگه دارید:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### مرحله ۴ — استقرار Cloudflare Worker (Durable Object تونل TCP)
+
+```bash
+git clone https://github.com/JJ-arch/MasterHttpRelayVPN.git
+cd MasterHttpRelayVPN/apps_script
+```
+
+فایل `wrangler_tcp.toml` را باز کنید و مقدار `AUTH_KEY` در بخش `[vars]` را با رمز مشترک از مرحله ۳ جایگزین کنید. در صورت تمایل نام Worker را تغییر دهید:
+
+```toml
+name = "tcp-tunnel"     # → آدرس https://tcp-tunnel.<your-subdomain>.workers.dev
+```
+
+سپس:
+
+```bash
+wrangler deploy --config wrangler_tcp.toml
+```
+
+Wrangler آدرس deploy‌شده را چاپ می‌کند، مثل `https://tcp-tunnel.<your-subdomain>.workers.dev`. **این آدرس را ذخیره کنید.**
+
+تست سلامت:
+
+```bash
+curl https://tcp-tunnel.<your-subdomain>.workers.dev
+# {"ok":true,"status":"healthy","role":"tcp_tunnel"}
+```
+
+### مرحله ۵ — استقرار گوگل اپس‌اسکریپت
+
+1. به <https://script.google.com> بروید → **New project**.
+2. کد پیش‌فرض را پاک کنید و کل محتوای فایل [`apps_script/Code.gs`](apps_script/Code.gs) را بچسبانید.
+3. در بالای فایل تنظیم کنید:
+   - `AUTH_KEY` → رمز مشترک مرحله ۳.
+   - `CF_ENDPOINT` → آدرس Worker از مرحله ۴.
+4. **Deploy → New deployment** را بزنید.
+5. مقادیر:
+   - **Type:** Web app
+   - **Execute as:** Me
+   - **Who has access:** Anyone
+6. روی **Deploy** کلیک کنید و **Deployment ID** را کپی کنید (همان توکن طولانی در URL پس از `/exec`/`/dev`). این مقدار را در `config.json` قرار خواهید داد.
+
+اگر قبلاً اپس‌اسکریپت قدیمی (بدون TCP) را deploy کرده بودید، می‌توانید همان پروژه را ویرایش کنید (ترجیحاً — Deployment ID ثابت می‌ماند) یا یک deployment جدید بسازید.
+
+### مرحله ۶ — نصب پروکسی پایتون
+
+از ریشه‌ی مخزن:
+
+```bash
+# لینوکس / مک
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# ویندوز (PowerShell)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+کانفیگ را کپی و ویرایش کنید:
+
+```bash
+cp config.example.json config.json
+```
+
+حداقل این مقادیر:
+
+```jsonc
+{
+  "auth_key": "<رمز مشترک مرحله ۳>",
+  "script_id": "<Deployment ID از مرحله ۵>",
+  "listen_port": 8080,
+  "socks5_enabled": true,
+  "socks5_port": 1080
+}
+```
+
+(ابزار wizard با دستور `python setup.py` همین مراحل را به صورت تعاملی انجام می‌دهد.)
+
+### مرحله ۷ — اجرا
+
+```bash
+python main.py
+```
+
+باید پیام‌هایی شبیه این ببینید:
+
+```
+Apps Script relay : SNI=www.google.com → script.google.com
+HTTP proxy listening on 127.0.0.1:8080
+SOCKS5 proxy listening on 127.0.0.1:1080
+```
+
+سپس مرورگر را تنظیم کنید:
+
+- **HTTPS / HTTP که می‌خواهید از مسیر MITM رله‌ی اصلی برود:** پروکسی HTTP/HTTPS را روی `127.0.0.1:8080` بگذارید.
+- **تونل TCP واقعی (قابلیت جدید این فورک):** پروکسی SOCKS5 را روی `127.0.0.1:1080` بگذارید.
+
+برای فایرفاکس: *Settings → Network Settings → Manual proxy configuration → SOCKS Host = `127.0.0.1`, Port = `1080`, SOCKS v5*. تیک **Proxy DNS when using SOCKS v5** را هم بزنید تا DNS هم از تونل خارج شود.
+
+### مرحله ۸ — تست مسیر TCP
+
+```bash
+# باید از مسیر SOCKS5 → اپس‌اسکریپت → DO → TCP واقعی برود:
+curl -x socks5h://127.0.0.1:1080 https://example.com
+```
+
+سپس یک سایت TLS را در مرورگر باز کنید. در لاگ‌ها چیزی شبیه این می‌بینید:
+
+```
+SOCKS5 CONNECT → example.com:443
+TCP-tunnel [<id>] → example.com:443 (open)
+TCP-tunnel [<id>] closed (up=2048, down=46123)
 ```
 
 ---
 
-## فایل‌های پروژه
+## مرجع تنظیمات (فیلدهای مرتبط با TCP)
 
-```
-MasterHttpRelayVPN/
-├── main.py                    # نقطه شروع: پراکسی را راه‌اندازی می‌کند
-├── config.example.json        # نمونه کانفیگ (به config.json کپی شود)
-├── requirements.txt           # وابستگی‌های اختیاری پایتون
-├── apps_script/
-│   ├── Code.gs                # اسکریپت رله روی Google Apps Script
-│   ├── cloudflare_worker.js   # template نود خروجی برای Cloudflare Workers
-│   └── deno_deploy.ts         # template نود خروجی برای Deno Deploy
-├── ca/                        # گواهی MITM (هرگز به اشتراک نگذارید)
-│   ├── ca.crt
-│   └── ca.key
-└── src/                       # پیاده‌سازی پراکسی
-    ├── proxy_server.py        # دریافت CONNECT و SOCKS5
-    ├── domain_fronter.py      # کلاینت رله Apps Script (fronted از طریق Google)
-    ├── h2_transport.py        # ارتباط HTTP/2 (اختیاری)
-    ├── mitm.py                # ساخت و مدیریت گواهی‌ها
-    ├── cert_installer.py      # نصب خودکار CA در ویندوز/مک/لینوکس + فایرفاکس
-    ├── codec.py               # رمزگشای Content-Encoding (gzip/deflate/br/zstd)
-    ├── google_ip_scanner.py   # اسکنر IP های Google برای یافتن سریع‌ترین
-    ├── constants.py           # مقادیر پیش‌فرض قابل تنظیم
-    └── logging_utils.py       # فرمت‌دهنده‌ی لاگ رنگی و منظم
-```
+پروکسی پایتون از `config.json` می‌خواند. فیلدهای کلیدی:
+
+| کلید                  | کاربرد                                                                        |
+|-----------------------|------------------------------------------------------------------------------|
+| `auth_key`            | رمز مشترک — باید با `AUTH_KEY` در `Code.gs` و `wrangler_tcp.toml` یکی باشد. |
+| `script_id`           | Deployment ID اپس‌اسکریپت. می‌تواند لیست برای پخش بار روی چند اکانت باشد.    |
+| `socks5_enabled`      | `true` تا listener SOCKS5 (مسیر TCP این فورک) فعال شود.                       |
+| `socks5_port`         | پورت گوش‌دهی SOCKS5 (پیش‌فرض `1080`).                                         |
+| `front_domain`        | SNI ارائه‌شده به شبکه (پیش‌فرض `www.google.com`).                              |
+| `google_ip`           | IPای که برای فرانت TCP-connect می‌شود (با `python main.py --scan` پیدا می‌شود). |
+| `tcp_connect_timeout` | ثانیه‌ی تایم‌اوت اتصال به TLS بالادست گوگل.                                    |
+
+تنظیمات ریز تونل (تکه‌بندی، long-poll و …) به‌صورت ویژگی‌های کلاس روی `ProxyServer` در [src/proxy/proxy_server.py](src/proxy/proxy_server.py) تعریف شده‌اند: `_TUNNEL_UPLOAD_CHUNK`, `_TUNNEL_POLL_LONG_MS` و … . مقادیر پیش‌فرض برای پلن رایگان تنظیم شده‌اند.
 
 ---
 
-## رفع مشکل
+## عیب‌یابی
 
-| مشکل | راه‌حل |
-|------|--------|
-| `Config not found` | فایل `config.example.json` را به `config.json` کپی کنید |
-| خطای certificate در مرورگر | گواهی CA را نصب کنید (مرحله ۶) |
-| تلگرام کار می‌کند ولی مرورگر سایت‌ها را باز نمی‌کند | تقریباً مطمئناً گواهی CA نصب نشده. مرحله ۶ را دنبال کنید، سپس مرورگر را **کاملاً ببندید و دوباره باز کنید** (برای Chrome/Edge مطمئن شوید هیچ پروسه Chrome در پس‌زمینه باز نیست). |
-| گواهی نصب شد ولی مرورگر هنوز خطا می‌دهد | Chrome و Edge گواهی‌ها را cache می‌کنند — باید مرورگر را **کاملاً ببندید** (Task Manager یا system tray را چک کنید) و دوباره باز کنید. Firefox نیاز به import جداگانه دارد (بخش Firefox در مرحله ۶). |
-| خطای `unauthorized` | مقدار `auth_key` و `AUTH_KEY` باید یکسان باشند |
-| timeout | IP دیگری برای Google امتحان کنید |
-| سرعت کم | از چند `script_id` برای load balancing استفاده کنید |
-| خطای `502 Bad JSON` | Google به‌جای JSON پاسخ HTML برگردانده (مثلاً صفحه quota یا 404). دلایل: `script_id` اشتباه، تجاوز از سهمیه روزانه Apps Script، یا عدم ایجاد deployment جدید پس از ویرایش `Code.gs`. `script_id` را بررسی کنید و یک **deployment جدید** بسازید. |
-| تلگرام روی HTTP proxy کار می‌کند ولی روی SOCKS5 نه | **طبیعی است.** کلاینت SOCKS5 نام دامنه را روی سیستم خودش resolve می‌کند و مستقیم به IP وصل می‌شود، پس بایت‌های MTProto تلگرام به IP فیلترشده می‌رسد که نه می‌توانیم direct-tunnel کنیم و نه MITM. تلگرام را به‌جای SOCKS5 به صورت **HTTP proxy** (`127.0.0.1:8085`) تنظیم کنید — در این حالت نام دامنه ارسال می‌شود و پراکسی با SNI-rewrite از طریق Google عبور می‌دهد. |
-| گوگل و یوتیوب باز می‌شوند ولی ویدیوهای یوتیوب پخش نمی‌شوند و سایت‌های دیگر باز نمی‌شوند | اتصال به `script.google.com` با موفقیت برقرار نشده. احتمالاً مشکل از deployment فایل `Code.gs` روی Google Apps Script است یا سهمیه روزانه اجرا تمام شده. یک deployment جدید از `Code.gs` بسازید و `script_id` را بررسی کنید، یا منتظر بمانید تا سهمیه reset شود (نیمه‌شب به وقت Pacific / ۱۰:۳۰ ظهر به وقت ایران). |
+**`curl` کار می‌کند ولی مرورگر می‌گوید "connection closed".**
+معمولاً یا گواهی MITM محلی trust نشده، یا SOCKS5 را در مرورگر گذاشته‌اید ولی DNS هنوز از resolver سیستم می‌رود (در فایرفاکس **Proxy DNS when using SOCKS v5** را تیک بزنید). برای حالت MITM-HTTPS دستور `python main.py --install-cert` را اجرا کنید.
+
+**اپس‌اسکریپت `{"error":"unauthorized"}` برمی‌گرداند.**
+سه مقدار `AUTH_KEY` کاملاً یکی نیستند. `Code.gs`، `wrangler_tcp.toml` (`[vars] AUTH_KEY`) و `config.json` (`auth_key`) را دوباره چک کنید.
+
+**`{"error":"cf_status_500"}` یا `cf_status_401`.**
+اپس‌اسکریپت به Worker رسید ولی پاسخ غیر ۲۰۰ گرفت. `401` = AUTH_KEY بین اپس‌اسکریپت و Worker یکی نیست. `500` = خود Worker خطا داشته — با `wrangler tail` خطای زنده را ببینید.
+
+**اولین لود مرورگر هنگ می‌زند، در تلاش دوم باز می‌شود.**
+DO در حال cold-start است؛ درخواست‌های بعدی به DO گرم می‌رسند. اگر ادامه‌دار شد، `wrangler tail` دلیل را نشان می‌دهد.
+
+**سهمیه‌ی `UrlFetchApp` تمام شد.**
+به سقف روزانه‌ی اپس‌اسکریپت خوردید. تا ریست بعدی (نیمه‌شب اقیانوس آرام) صبر کنید یا بار را روی چند `script_id` از اکانت‌های گوگل مختلف پخش کنید.
 
 ---
 
-## نکات امنیتی
+## قدردانی
 
-- فایل `config.json` را با کسی به اشتراک نگذارید.
-- مقدار پیش‌فرض `AUTH_KEY` را قبل از deploy عوض کنید.
-- پوشه `ca/` را منتشر نکنید.
-- بهتر است `listen_host` روی `127.0.0.1` بماند.
-- هر دیپلویمنت روی گوگل اسکریپت دارای محدودیت 20,000 درخواست در هر 24 ساعت است
+- پروژه‌ی اصلی: [masterking32/MasterHttpRelayVPN](https://github.com/masterking32/MasterHttpRelayVPN). تمام اعتبار رله‌ی HTTP، ترفند domain fronting و پایه‌ی اپس‌اسکریپت متعلق به نویسنده‌ی اصلی است.
+- این فورک مسیر داده‌ی TCP (Durable Object، پروتکل اَکشن‌محور، uploader/downloader هم‌زمان، مدل سهمیه‌ی long-poll) را اضافه می‌کند.
+
 ---
 
-## License
+## سلب مسئولیت
 
-MIT
+این نرم‌افزار **همان‌طور که هست (AS IS)** فقط برای اهداف آموزشی و پژوهشی ارائه می‌شود. شما خودتان مسئول رعایت قوانین محلی و شرایط استفاده از سرویس گوگل، Cloudflare و هر شخص ثالث دیگر هستید. زدن سقف سهمیه‌ی Google Apps Script یا Cloudflare ممکن است به اقدامات اجرایی روی حساب شما منجر شود؛ این ریسک به عهده‌ی خود شماست.
+
+</div>
