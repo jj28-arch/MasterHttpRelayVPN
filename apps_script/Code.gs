@@ -31,7 +31,7 @@ const SAFE_REPLAY_METHODS = { GET: 1, HEAD: 1, OPTIONS: 1 };
 
 // Cloudflare Worker that owns the persistent TCP socket per tunnel_id.
 // Replace with YOUR worker URL.
-const CF_ENDPOINT = "https://tcp-tunnel.jjj288708.workers.dev";
+const CF_ENDPOINT = "CHANGE_ME_TO_YOUR_CLOUDFLARE_WORKER_ENDPOINT";
 
 // UrlFetchApp hard-caps execution at ~60s, so a long-poll request to the
 // CF Worker must request a wait shorter than that. The Apps Script wrapper
